@@ -110,3 +110,9 @@ operatorClientCert: {}
 
 ## Dev Mode
 devMode: false
+
+fileSecrets: {}
+
+userPasswordSecrets: {}
+
+podMonitor: true

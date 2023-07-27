@@ -1,0 +1,18 @@
+{{- if .Values.podMonitor }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "aerospike-cluster.fullname" . }}
+spec:
+  podMetricsEndpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
+  namespaceSelector:
+    matchNames:
+    - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      aerospike.com/cr: {{ .Values.commonName }}
+      app: {{ .Chart.Name }}
+{{- end }}
