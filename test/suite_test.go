@@ -28,8 +28,10 @@ import (
 	"github.com/onsi/gomega/gexec"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	k8Runtime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -41,7 +43,7 @@ import (
 
 	// +kubebuilder:scaffold:imports
 
-	asdbv1beta1 "github.com/aerospike/aerospike-kubernetes-operator/api/v1beta1"
+	asdbv1 "github.com/aerospike/aerospike-kubernetes-operator/api/v1"
 	"github.com/aerospike/aerospike-kubernetes-operator/pkg/utils"
 )
 
@@ -86,7 +88,7 @@ var _ = BeforeEach(func() {
 
 func deleteAllClusters(namespace string) {
 	ctx := goctx.TODO()
-	list := &asdbv1beta1.AerospikeClusterList{}
+	list := &asdbv1.AerospikeClusterList{}
 	listOps := &client.ListOptions{Namespace: namespace}
 
 	err := k8sClient.List(ctx, list, listOps)
@@ -132,6 +134,27 @@ func cleanupPVC(k8sClient client.Client, ns string) error {
 	return nil
 }
 
+func deletePVC(k8sClient client.Client, pvcNamespacedName types.NamespacedName) error {
+	pvc := &corev1.PersistentVolumeClaim{}
+	if err := k8sClient.Get(goctx.TODO(), pvcNamespacedName, pvc); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+
+		return err
+	}
+
+	if utils.IsPVCTerminating(pvc) {
+		return nil
+	}
+
+	if err := k8sClient.Delete(goctx.TODO(), pvc); err != nil {
+		return fmt.Errorf("could not delete pvc %s: %w", pvc.Name, err)
+	}
+
+	return nil
+}
+
 // This is used when running tests on existing cluster
 // user has to install its own operator then run cleanup and then start this
 
@@ -154,7 +177,7 @@ var _ = BeforeSuite(
 		err = clientgoscheme.AddToScheme(scheme)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = asdbv1beta1.AddToScheme(scheme)
+		err = asdbv1.AddToScheme(scheme)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = admissionv1.AddToScheme(scheme)

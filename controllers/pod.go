@@ -16,7 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	asdbv1beta1 "github.com/aerospike/aerospike-kubernetes-operator/api/v1beta1"
+	asdbv1 "github.com/aerospike/aerospike-kubernetes-operator/api/v1"
 	"github.com/aerospike/aerospike-kubernetes-operator/pkg/jsonpatch"
 	"github.com/aerospike/aerospike-kubernetes-operator/pkg/utils"
 )
@@ -192,7 +192,7 @@ func (r *SingleClusterReconciler) restartASDInPod(
 	// Quick restart attempt should not take significant time.
 	// Therefore, it's ok to block the operator on the quick restart attempt.
 	stdout, stderr, err := utils.Exec(
-		pod, asdbv1beta1.AerospikeServerContainerName, cmd, r.KubeClient,
+		pod, asdbv1.AerospikeServerContainerName, cmd, r.KubeClient,
 		r.KubeConfig,
 	)
 	if err != nil {
@@ -207,7 +207,7 @@ func (r *SingleClusterReconciler) restartASDInPod(
 			// Quick restart attempt should not take significant time.
 			// Therefore, it's ok to block the operator on the quick restart attempt.
 			stdout, stderr, err = utils.Exec(
-				pod, asdbv1beta1.AerospikeServerContainerName, cmd, r.KubeClient,
+				pod, asdbv1.AerospikeServerContainerName, cmd, r.KubeClient,
 				r.KubeConfig,
 			)
 
@@ -321,7 +321,7 @@ func (r *SingleClusterReconciler) ensurePodsRunningAndReady(podsToCheck []*corev
 			r.Log.Info("Pod is restarted", "podName", updatedPod.Name)
 			r.Recorder.Eventf(
 				r.aeroCluster, corev1.EventTypeNormal, "PodRestarted",
-				"[rack-%s] Restarted Pod %s", pod.Labels[asdbv1beta1.AerospikeRackIDLabel], pod.Name,
+				"[rack-%s] Restarted Pod %s", pod.Labels[asdbv1.AerospikeRackIDLabel], pod.Name,
 			)
 		}
 
@@ -343,16 +343,6 @@ func (r *SingleClusterReconciler) ensurePodsRunningAndReady(podsToCheck []*corev
 	)
 
 	return reconcileRequeueAfter(10)
-}
-
-func getRearrangedFailedAndActivePods(pods []*corev1.Pod) []*corev1.Pod {
-	var rearrangedPods []*corev1.Pod
-
-	failedPods, activePods := getFailedAndActivePods(pods)
-	rearrangedPods = append(rearrangedPods, failedPods...)
-	rearrangedPods = append(rearrangedPods, activePods...)
-
-	return rearrangedPods
 }
 
 func getFailedAndActivePods(pods []*corev1.Pod) (failedPods, activePods []*corev1.Pod) {
@@ -549,6 +539,7 @@ func (r *SingleClusterReconciler) cleanupPods(
 			}
 		}
 
+		// Try to delete corresponding pod service if it was created
 		if r.aeroCluster.Spec.PodSpec.MultiPodPerHost {
 			// Remove service for pod
 			// TODO: make it more robust, what if it fails
@@ -649,7 +640,7 @@ func (r *SingleClusterReconciler) cleanupDanglingPodsRack(sts *appsv1.StatefulSe
 
 // getIgnorablePods returns pods from racksToDelete that are currently not running and can be ignored in stability
 // checks.
-func (r *SingleClusterReconciler) getIgnorablePods(racksToDelete []asdbv1beta1.Rack) (
+func (r *SingleClusterReconciler) getIgnorablePods(racksToDelete []asdbv1.Rack) (
 	[]corev1.Pod, error,
 ) {
 	var ignorablePods []corev1.Pod
@@ -733,7 +724,7 @@ func (r *SingleClusterReconciler) isAnyPodInImageFailedState(podList []corev1.Po
 	return false
 }
 
-func getFQDNForPod(aeroCluster *asdbv1beta1.AerospikeCluster, host string) string {
+func getFQDNForPod(aeroCluster *asdbv1.AerospikeCluster, host string) string {
 	return fmt.Sprintf("%s.%s.%s", host, aeroCluster.Name, aeroCluster.Namespace)
 }
 
@@ -790,7 +781,7 @@ func getPodNames(pods []*corev1.Pod) []string {
 //nolint:gocyclo // for readability
 func (r *SingleClusterReconciler) handleNSOrDeviceRemoval(rackState *RackState, podsToRestart []*corev1.Pod) error {
 	var (
-		rackStatus     asdbv1beta1.Rack
+		rackStatus     asdbv1.Rack
 		removedDevices []string
 		removedFiles   []string
 	)
@@ -822,8 +813,8 @@ func (r *SingleClusterReconciler) handleNSOrDeviceRemoval(rackState *RackState, 
 			specStorage := specNamespace.(map[string]interface{})["storage-engine"].(map[string]interface{})
 			statusStorage := statusNamespace.(map[string]interface{})["storage-engine"].(map[string]interface{})
 
-			statusDevices := sets.String{}
-			specDevices := sets.String{}
+			statusDevices := sets.Set[string]{}
+			specDevices := sets.Set[string]{}
 
 			if statusStorage["devices"] != nil {
 				for _, statusDeviceInterface := range statusStorage["devices"].([]interface{}) {
@@ -837,7 +828,7 @@ func (r *SingleClusterReconciler) handleNSOrDeviceRemoval(rackState *RackState, 
 				}
 			}
 
-			removedDevicesPerNS := statusDevices.Difference(specDevices).List()
+			removedDevicesPerNS := sets.List(statusDevices.Difference(specDevices))
 			for _, removedDevice := range removedDevicesPerNS {
 				deviceName := getVolumeNameFromDevicePath(rackStatus.Storage.Volumes, removedDevice)
 				r.Log.Info(
@@ -848,8 +839,8 @@ func (r *SingleClusterReconciler) handleNSOrDeviceRemoval(rackState *RackState, 
 				removedDevices = append(removedDevices, deviceName)
 			}
 
-			statusFiles := sets.String{}
-			specFiles := sets.String{}
+			statusFiles := sets.Set[string]{}
+			specFiles := sets.Set[string]{}
 
 			if statusStorage["files"] != nil {
 				for _, statusFileInterface := range statusStorage["files"].([]interface{}) {
@@ -863,14 +854,14 @@ func (r *SingleClusterReconciler) handleNSOrDeviceRemoval(rackState *RackState, 
 				}
 			}
 
-			removedFilesPerNS := statusFiles.Difference(specFiles).List()
+			removedFilesPerNS := sets.List(statusFiles.Difference(specFiles))
 			if len(removedFilesPerNS) > 0 {
 				removedFiles = append(removedFiles, removedFilesPerNS...)
 			}
 
 			var statusMounts []string
 
-			specMounts := sets.String{}
+			specMounts := sets.Set[string]{}
 
 			if statusNamespace.(map[string]interface{})["index-type"] != nil {
 				statusIndex := statusNamespace.(map[string]interface{})["index-type"].(map[string]interface{})
@@ -974,7 +965,7 @@ func (r *SingleClusterReconciler) handleNSOrDeviceRemovalPerPod(
 	}
 
 	if len(removedDevices) > 0 {
-		dirtyVolumes := sets.String{}
+		dirtyVolumes := sets.Set[string]{}
 		dirtyVolumes.Insert(removedDevices...)
 		dirtyVolumes.Insert(podStatus.DirtyVolumes...)
 
@@ -983,7 +974,7 @@ func (r *SingleClusterReconciler) handleNSOrDeviceRemovalPerPod(
 		patch1 := jsonpatch.PatchOperation{
 			Operation: "replace",
 			Path:      "/status/pods/" + pod.Name + "/dirtyVolumes",
-			Value:     dirtyVolumes.List(),
+			Value:     sets.List(dirtyVolumes),
 		}
 		patches = append(patches, patch1)
 
@@ -1008,11 +999,11 @@ func (r *SingleClusterReconciler) handleNSOrDeviceRemovalPerPod(
 
 func (r *SingleClusterReconciler) getNSAddedDevices(rackState *RackState) ([]string, error) {
 	var (
-		rackStatus asdbv1beta1.Rack
+		rackStatus asdbv1.Rack
 		volumes    []string
 	)
 
-	newAeroCluster := &asdbv1beta1.AerospikeCluster{}
+	newAeroCluster := &asdbv1.AerospikeCluster{}
 	if err := r.Client.Get(
 		context.TODO(), types.NamespacedName{
 			Name: r.aeroCluster.Name, Namespace: r.aeroCluster.Namespace,
@@ -1050,7 +1041,7 @@ func (r *SingleClusterReconciler) getNSAddedDevices(rackState *RackState) ([]str
 
 			var specDevices []string
 
-			statusDevices := sets.String{}
+			statusDevices := sets.Set[string]{}
 
 			if specStorage["devices"] != nil {
 				for _, specDeviceInterface := range specStorage["devices"].([]interface{}) {
@@ -1117,7 +1108,7 @@ func (r *SingleClusterReconciler) handleNSOrDeviceAddition(volumes []string, pod
 	return quickRestart
 }
 
-func getVolumeNameFromDevicePath(volumes []asdbv1beta1.VolumeSpec, s string) string {
+func getVolumeNameFromDevicePath(volumes []asdbv1.VolumeSpec, s string) string {
 	for idx := range volumes {
 		if volumes[idx].Aerospike.Path == s {
 			return volumes[idx].Name
@@ -1138,7 +1129,7 @@ func (r *SingleClusterReconciler) deleteFileStorage(pod *corev1.Pod, fileName st
 		"Deleting file", "file", fileName, "cmd", cmd, "podname", pod.Name,
 	)
 
-	stdout, stderr, err := utils.Exec(pod, asdbv1beta1.AerospikeServerContainerName, cmd, r.KubeClient, r.KubeConfig)
+	stdout, stderr, err := utils.Exec(pod, asdbv1.AerospikeServerContainerName, cmd, r.KubeClient, r.KubeConfig)
 
 	if err != nil {
 		r.Log.V(1).Info(

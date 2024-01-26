@@ -15,12 +15,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	asdbv1beta1 "github.com/aerospike/aerospike-kubernetes-operator/api/v1beta1"
+	asdbv1 "github.com/aerospike/aerospike-kubernetes-operator/api/v1"
 	"github.com/aerospike/aerospike-kubernetes-operator/pkg/utils"
 	lib "github.com/aerospike/aerospike-management-lib"
 )
@@ -47,33 +46,33 @@ type PortInfo struct {
 }
 
 var defaultContainerPorts = map[string]PortInfo{
-	asdbv1beta1.ServicePortName: {
+	asdbv1.ServicePortName: {
 		connectionType: "service",
 		configParam:    "port",
 		exposedOnHost:  true,
 	},
-	asdbv1beta1.ServiceTLSPortName: {
+	asdbv1.ServiceTLSPortName: {
 		connectionType: "service",
 		configParam:    "tls-port",
 		exposedOnHost:  true,
 	},
-	asdbv1beta1.FabricPortName: {
+	asdbv1.FabricPortName: {
 		connectionType: "fabric",
 		configParam:    "port",
 	},
-	asdbv1beta1.FabricTLSPortName: {
+	asdbv1.FabricTLSPortName: {
 		connectionType: "fabric",
 		configParam:    "tls-port",
 	},
-	asdbv1beta1.HeartbeatPortName: {
+	asdbv1.HeartbeatPortName: {
 		connectionType: "heartbeat",
 		configParam:    "port",
 	},
-	asdbv1beta1.HeartbeatTLSPortName: {
+	asdbv1.HeartbeatTLSPortName: {
 		connectionType: "heartbeat",
 		configParam:    "tls-port",
 	},
-	asdbv1beta1.InfoPortName: {
+	asdbv1.InfoPortName: {
 		connectionType: "info",
 		configParam:    "port",
 		exposedOnHost:  true,
@@ -87,19 +86,6 @@ func (r *SingleClusterReconciler) createSTS(
 
 	r.Log.Info("Create statefulset for AerospikeCluster", "size", replicas)
 
-	if r.aeroCluster.Spec.PodSpec.MultiPodPerHost {
-		// Create services for all statefulset pods
-		for i := 0; i < rackState.Size; i++ {
-			// Statefulset name created from cr name
-			name := fmt.Sprintf("%s-%d", namespacedName.Name, i)
-			if err := r.createPodService(
-				name, r.aeroCluster.Namespace,
-			); err != nil {
-				return nil, err
-			}
-		}
-	}
-
 	ports := getSTSContainerPort(
 		r.aeroCluster.Spec.PodSpec.MultiPodPerHost,
 		r.aeroCluster.Spec.AerospikeConfig,
@@ -109,7 +95,7 @@ func (r *SingleClusterReconciler) createSTS(
 		r.aeroCluster.Name, rackState.Rack.ID,
 	)
 
-	tlsName, _ := asdbv1beta1.GetServiceTLSNameAndPort(r.aeroCluster.Spec.AerospikeConfig)
+	tlsName, _ := asdbv1.GetServiceTLSNameAndPort(r.aeroCluster.Spec.AerospikeConfig)
 	envVarList := []corev1.EnvVar{
 		newSTSEnvVar("MY_POD_NAME", "metadata.name"),
 		newSTSEnvVar("MY_POD_NAMESPACE", "metadata.namespace"),
@@ -151,9 +137,8 @@ func (r *SingleClusterReconciler) createSTS(
 					// TerminationGracePeriodSeconds: &int64(30),
 					InitContainers: []corev1.Container{
 						{
-							Name:  asdbv1beta1.AerospikeInitContainerName,
-							Image: asdbv1beta1.GetAerospikeInitContainerImage(r.aeroCluster),
-							// Change to PullAlways for image testing.
+							Name:            asdbv1.AerospikeInitContainerName,
+							Image:           asdbv1.GetAerospikeInitContainerImage(r.aeroCluster),
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							VolumeMounts:    getDefaultAerospikeInitContainerVolumeMounts(),
 							Env: append(
@@ -177,7 +162,7 @@ func (r *SingleClusterReconciler) createSTS(
 
 					Containers: []corev1.Container{
 						{
-							Name:            asdbv1beta1.AerospikeServerContainerName,
+							Name:            asdbv1.AerospikeServerContainerName,
 							Image:           r.aeroCluster.Spec.Image,
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							Ports:           ports,
@@ -359,7 +344,7 @@ func (r *SingleClusterReconciler) getSTS(rackState *RackState) (*appsv1.Stateful
 }
 
 func (r *SingleClusterReconciler) buildSTSConfigMap(
-	namespacedName types.NamespacedName, rack *asdbv1beta1.Rack,
+	namespacedName types.NamespacedName, rack *asdbv1.Rack,
 ) error {
 	r.Log.Info("Creating a new ConfigMap for statefulSet")
 
@@ -452,7 +437,7 @@ func (r *SingleClusterReconciler) buildSTSConfigMap(
 }
 
 func (r *SingleClusterReconciler) updateSTSConfigMap(
-	namespacedName types.NamespacedName, rack *asdbv1beta1.Rack,
+	namespacedName types.NamespacedName, rack *asdbv1.Rack,
 ) error {
 	r.Log.Info("Updating ConfigMap", "ConfigMap", namespacedName)
 
@@ -479,245 +464,6 @@ func (r *SingleClusterReconciler) updateSTSConfigMap(
 	}
 
 	return nil
-}
-
-func (r *SingleClusterReconciler) createSTSHeadlessSvc() error {
-	r.Log.Info("Create headless service for statefulSet")
-
-	ls := utils.LabelsForAerospikeCluster(r.aeroCluster.Name)
-
-	serviceName := getSTSHeadLessSvcName(r.aeroCluster)
-	service := &corev1.Service{}
-
-	err := r.Client.Get(
-		context.TODO(), types.NamespacedName{
-			Name: serviceName, Namespace: r.aeroCluster.Namespace,
-		}, service,
-	)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			service = &corev1.Service{
-				ObjectMeta: metav1.ObjectMeta{
-					// Headless service has the same name as AerospikeCluster
-					Name:      serviceName,
-					Namespace: r.aeroCluster.Namespace,
-					// deprecation in 1.10, supported until at least 1.13,  breaks peer-finder/kube-dns if not used
-					Annotations: map[string]string{
-						"service.alpha.kubernetes.io/tolerate-unready-endpoints": "true",
-					},
-					Labels: ls,
-				},
-				Spec: corev1.ServiceSpec{
-					// deprecates service.alpha.kubernetes.io/tolerate-unready-endpoints as of 1.
-					// 10? see: kubernetes/kubernetes#49239 Fixed in 1.11 as of #63742
-					PublishNotReadyAddresses: true,
-					ClusterIP:                "None",
-					Selector:                 ls,
-				},
-			}
-
-			r.appendServicePorts(service)
-
-			// Set AerospikeCluster instance as the owner and controller
-			err = controllerutil.SetControllerReference(
-				r.aeroCluster, service, r.Scheme,
-			)
-			if err != nil {
-				return err
-			}
-
-			if err = r.Client.Create(
-				context.TODO(), service, createOption,
-			); err != nil {
-				return fmt.Errorf(
-					"failed to create headless service for statefulset: %v",
-					err,
-				)
-			}
-
-			r.Log.Info("Created new headless service")
-
-			return nil
-		}
-
-		return err
-	}
-
-	r.Log.Info(
-		"Service already exist for statefulSet. Using existing service", "name",
-		utils.NamespacedName(service.Namespace, service.Name),
-	)
-
-	return nil
-}
-
-func (r *SingleClusterReconciler) createSTSLoadBalancerSvc() error {
-	loadBalancer := r.aeroCluster.Spec.SeedsFinderServices.LoadBalancer
-	if loadBalancer == nil {
-		r.Log.Info("LoadBalancer is not configured. Skipping...")
-		return nil
-	}
-
-	serviceName := r.aeroCluster.Name + "-lb"
-	service := &corev1.Service{}
-
-	if err := r.Client.Get(
-		context.TODO(), types.NamespacedName{
-			Name: serviceName, Namespace: r.aeroCluster.Namespace,
-		}, service,
-	); err != nil {
-		if errors.IsNotFound(err) {
-			r.Log.Info("Creating LoadBalancer service for cluster")
-			ls := utils.LabelsForAerospikeCluster(r.aeroCluster.Name)
-
-			var targetPort int32
-			if loadBalancer.TargetPort >= 1024 {
-				// if target port is specified in CR.
-				targetPort = loadBalancer.TargetPort
-			} else if tlsName, tlsPort := asdbv1beta1.GetServiceTLSNameAndPort(
-				r.aeroCluster.Spec.AerospikeConfig,
-			); tlsName != "" && tlsPort != nil {
-				targetPort = int32(*tlsPort)
-			} else {
-				targetPort = int32(*asdbv1beta1.GetServicePort(r.aeroCluster.Spec.AerospikeConfig))
-			}
-
-			var port int32
-			if loadBalancer.Port >= 1024 {
-				// if port is specified in CR.
-				port = loadBalancer.Port
-			} else {
-				port = targetPort
-			}
-
-			service = &corev1.Service{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:        serviceName,
-					Namespace:   r.aeroCluster.Namespace,
-					Annotations: loadBalancer.Annotations,
-					Labels:      ls,
-				},
-				Spec: corev1.ServiceSpec{
-					Type:     corev1.ServiceTypeLoadBalancer,
-					Selector: ls,
-					Ports: []corev1.ServicePort{
-						{
-							Port:       port,
-							TargetPort: intstr.FromInt(int(targetPort)),
-						},
-					},
-				},
-			}
-
-			if len(loadBalancer.LoadBalancerSourceRanges) > 0 {
-				service.Spec.LoadBalancerSourceRanges = loadBalancer.LoadBalancerSourceRanges
-			}
-
-			if len(loadBalancer.ExternalTrafficPolicy) > 0 {
-				service.Spec.ExternalTrafficPolicy = loadBalancer.ExternalTrafficPolicy
-			}
-
-			// Set AerospikeCluster instance as the owner and controller
-			if nErr := controllerutil.SetControllerReference(
-				r.aeroCluster, service, r.Scheme,
-			); nErr != nil {
-				return nErr
-			}
-
-			if nErr := r.Client.Create(
-				context.TODO(), service, createOption,
-			); nErr != nil {
-				return nErr
-			}
-
-			r.Log.Info(
-				"Created new LoadBalancer service.", "serviceName",
-				service.GetName(),
-			)
-
-			return nil
-		}
-
-		return err
-	}
-
-	r.Log.Info(
-		"LoadBalancer Service already exist for cluster. Using existing service",
-		"name", utils.NamespacedName(service.Namespace, service.Name),
-	)
-
-	return nil
-}
-
-func (r *SingleClusterReconciler) createPodService(pName, pNamespace string) error {
-	service := &corev1.Service{}
-	if err := r.Client.Get(
-		context.TODO(),
-		types.NamespacedName{Name: pName, Namespace: pNamespace}, service,
-	); err == nil {
-		return nil
-	}
-
-	// NodePort will be allocated automatically
-	service = &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      pName,
-			Namespace: pNamespace,
-		},
-		Spec: corev1.ServiceSpec{
-			Type: corev1.ServiceTypeNodePort,
-			Selector: map[string]string{
-				"statefulset.kubernetes.io/pod-name": pName,
-			},
-			ExternalTrafficPolicy: "Local",
-		},
-	}
-
-	r.appendServicePorts(service)
-
-	// Set AerospikeCluster instance as the owner and controller.
-	// It is created before Pod, so Pod cannot be the owner
-	err := controllerutil.SetControllerReference(
-		r.aeroCluster, service, r.Scheme,
-	)
-	if err != nil {
-		return err
-	}
-
-	if err := r.Client.Create(
-		context.TODO(), service, createOption,
-	); err != nil {
-		return fmt.Errorf(
-			"failed to create new service for pod %s: %v", pName, err,
-		)
-	}
-
-	return nil
-}
-
-func (r *SingleClusterReconciler) appendServicePorts(service *corev1.Service) {
-	if svcPort := asdbv1beta1.GetServicePort(
-		r.aeroCluster.Spec.
-			AerospikeConfig,
-	); svcPort != nil {
-		service.Spec.Ports = append(
-			service.Spec.Ports, corev1.ServicePort{
-				Name: asdbv1beta1.ServicePortName,
-				Port: int32(*svcPort),
-			},
-		)
-	}
-
-	if _, tlsPort := asdbv1beta1.GetServiceTLSNameAndPort(
-		r.aeroCluster.Spec.AerospikeConfig,
-	); tlsPort != nil {
-		service.Spec.Ports = append(
-			service.Spec.Ports, corev1.ServicePort{
-				Name: asdbv1beta1.ServiceTLSPortName,
-				Port: int32(*tlsPort),
-			},
-		)
-	}
 }
 
 // isPodUpgraded checks if all containers in the pod have images from the
@@ -747,7 +493,7 @@ func (r *SingleClusterReconciler) isPodOnDesiredImage(
 }
 
 func (r *SingleClusterReconciler) allContainersAreOnDesiredImages(
-	aeroCluster *asdbv1beta1.AerospikeCluster, podName string,
+	aeroCluster *asdbv1.AerospikeCluster, podName string,
 	containers []corev1.Container, logChanges bool,
 ) bool {
 	for idx := range containers {
@@ -767,7 +513,7 @@ func (r *SingleClusterReconciler) allContainersAreOnDesiredImages(
 		// 	return false
 		// }
 		if !utils.IsImageEqual(container.Image, desiredImage) {
-			if container.Name == asdbv1beta1.AerospikeInitContainerName {
+			if container.Name == asdbv1.AerospikeInitContainerName {
 				if logChanges {
 					r.Log.Info(
 						"Ignoring change to Aerospike Init Image", "pod",
@@ -792,30 +538,6 @@ func (r *SingleClusterReconciler) allContainersAreOnDesiredImages(
 	}
 
 	return true
-}
-
-func (r *SingleClusterReconciler) deletePodService(pName, pNamespace string) error {
-	service := &corev1.Service{}
-
-	serviceName := types.NamespacedName{Name: pName, Namespace: pNamespace}
-	if err := r.Client.Get(context.TODO(), serviceName, service); err != nil {
-		if errors.IsNotFound(err) {
-			r.Log.Info(
-				"Can't find service for pod while trying to delete it. Skipping...",
-				"service", serviceName,
-			)
-
-			return nil
-		}
-
-		return fmt.Errorf("failed to get service for pod %s: %v", pName, err)
-	}
-
-	if err := r.Client.Delete(context.TODO(), service); err != nil {
-		return fmt.Errorf("failed to delete service for pod %s: %v", pName, err)
-	}
-
-	return nil
 }
 
 // Called while creating new cluster and also during rolling restart.
@@ -1097,7 +819,7 @@ func (r *SingleClusterReconciler) updateSTSSchedulingPolicy(
 	if rackState.Rack.Zone != "" {
 		matchExpressions = append(
 			matchExpressions, corev1.NodeSelectorRequirement{
-				Key:      "failure-domain.beta.kubernetes.io/zone",
+				Key:      "topology.kubernetes.io/zone",
 				Operator: corev1.NodeSelectorOpIn,
 				Values:   []string{rackState.Rack.Zone},
 			},
@@ -1107,7 +829,7 @@ func (r *SingleClusterReconciler) updateSTSSchedulingPolicy(
 	if rackState.Rack.Region != "" {
 		matchExpressions = append(
 			matchExpressions, corev1.NodeSelectorRequirement{
-				Key:      "failure-domain.beta.kubernetes.io/region",
+				Key:      "topology.kubernetes.io/region",
 				Operator: corev1.NodeSelectorOpIn,
 				Values:   []string{rackState.Rack.Region},
 			},
@@ -1201,13 +923,13 @@ func (r *SingleClusterReconciler) updateSTSFromPodSpec(
 	st.Spec.Template.Spec.ImagePullSecrets = r.aeroCluster.Spec.PodSpec.ImagePullSecrets
 
 	st.Spec.Template.Spec.Containers =
-		updateStatefulSetContainers(
+		updateSTSContainers(
 			st.Spec.Template.Spec.Containers,
 			r.aeroCluster.Spec.PodSpec.Sidecars,
 		)
 
 	st.Spec.Template.Spec.InitContainers =
-		updateStatefulSetContainers(
+		updateSTSContainers(
 			st.Spec.Template.Spec.InitContainers,
 			r.aeroCluster.Spec.PodSpec.InitContainers,
 		)
@@ -1215,7 +937,7 @@ func (r *SingleClusterReconciler) updateSTSFromPodSpec(
 	r.updateReservedContainers(st)
 }
 
-func updateStatefulSetContainers(
+func updateSTSContainers(
 	stsContainers []corev1.Container, specContainers []corev1.Container,
 ) []corev1.Container {
 	// Add new sidecars.
@@ -1359,44 +1081,53 @@ func (r *SingleClusterReconciler) updateContainerImages(statefulset *appsv1.Stat
 	updateImage(statefulset.Spec.Template.Spec.InitContainers)
 }
 
-func (r *SingleClusterReconciler) updateAerospikeInitContainerImage(statefulSet *appsv1.StatefulSet) error {
-	for idx := range statefulSet.Spec.Template.Spec.InitContainers {
-		container := &statefulSet.Spec.Template.Spec.InitContainers[idx]
-		if container.Name != asdbv1beta1.AerospikeInitContainerName {
-			continue
-		}
+func (r *SingleClusterReconciler) updateAerospikeInitContainerImage() error {
+	stsList, err := r.getClusterSTSList()
+	if err != nil {
+		return err
+	}
 
-		desiredImage, err := utils.GetDesiredImage(
-			r.aeroCluster, container.Name,
-		)
-		if err != nil {
-			return err
-		}
+	for stsIdx := range stsList.Items {
+		statefulSet := stsList.Items[stsIdx]
+		for idx := range statefulSet.Spec.Template.Spec.InitContainers {
+			container := &statefulSet.Spec.Template.Spec.InitContainers[idx]
+			if container.Name != asdbv1.AerospikeInitContainerName {
+				continue
+			}
 
-		if !utils.IsImageEqual(container.Image, desiredImage) {
-			r.Log.Info(
-				"Updating image in statefulset spec", "container",
-				container.Name, "desiredImage", desiredImage,
-				"currentImage",
-				container.Image,
+			desiredImage, err := utils.GetDesiredImage(
+				r.aeroCluster, container.Name,
 			)
+			if err != nil {
+				return err
+			}
 
-			statefulSet.Spec.Template.Spec.InitContainers[idx].Image = desiredImage
+			if !utils.IsImageEqual(container.Image, desiredImage) {
+				r.Log.Info(
+					"Updating image in statefulset spec",
+					"statefulset", statefulSet.Name,
+					"container", container.Name,
+					"desiredImage", desiredImage,
+					"currentImage", container.Image,
+				)
 
-			if err := r.Client.Update(context.TODO(), statefulSet, updateOption); err != nil {
-				return fmt.Errorf(
-					"failed to update StatefulSet %s: %v",
-					statefulSet.Name,
-					err,
+				statefulSet.Spec.Template.Spec.InitContainers[idx].Image = desiredImage
+
+				if err := r.Client.Update(context.TODO(), &statefulSet, updateOption); err != nil {
+					return fmt.Errorf(
+						"failed to update StatefulSet %s: %v",
+						statefulSet.Name,
+						err,
+					)
+				}
+
+				r.Log.V(1).Info(
+					"Saved StatefulSet", "statefulSet", statefulSet,
 				)
 			}
 
-			r.Log.V(1).Info(
-				"Saved StatefulSet", "statefulSet", *statefulSet,
-			)
+			break
 		}
-
-		break
 	}
 
 	return nil
@@ -1457,7 +1188,7 @@ func getDefaultAerospikeInitContainerVolumeMounts() []corev1.VolumeMount {
 }
 
 func getDefaultSTSVolumes(
-	aeroCluster *asdbv1beta1.AerospikeCluster, rackState *RackState,
+	aeroCluster *asdbv1.AerospikeCluster, rackState *RackState,
 ) []corev1.Volume {
 	return []corev1.Volume{
 		{
@@ -1572,7 +1303,7 @@ func (r *SingleClusterReconciler) initializeSTSStorage(
 }
 
 func createPVCForVolumeAttachment(
-	aeroCluster *asdbv1beta1.AerospikeCluster, volume *asdbv1beta1.VolumeSpec,
+	aeroCluster *asdbv1.AerospikeCluster, volume *asdbv1.VolumeSpec,
 ) corev1.PersistentVolumeClaim {
 	pv := volume.Source.PersistentVolume
 
@@ -1610,7 +1341,7 @@ func createPVCForVolumeAttachment(
 	}
 }
 
-func createVolumeForVolumeAttachment(volume *asdbv1beta1.VolumeSpec) corev1.Volume {
+func createVolumeForVolumeAttachment(volume *asdbv1.VolumeSpec) corev1.Volume {
 	return corev1.Volume{
 		Name: volume.Name,
 		// Add all type of source,
@@ -1624,9 +1355,9 @@ func createVolumeForVolumeAttachment(volume *asdbv1beta1.VolumeSpec) corev1.Volu
 }
 
 // Add dummy volumeAttachment for aerospike, init container
-func getFinalVolumeAttachmentsForVolume(volume *asdbv1beta1.VolumeSpec) (
+func getFinalVolumeAttachmentsForVolume(volume *asdbv1.VolumeSpec) (
 	initContainerAttachments,
-	containerAttachments []asdbv1beta1.VolumeAttachment,
+	containerAttachments []asdbv1.VolumeAttachment,
 ) {
 	// Create dummy attachment for initContainer
 	initVolumePath := "/" + volume.Name // Using volume name for initContainer
@@ -1636,8 +1367,8 @@ func getFinalVolumeAttachmentsForVolume(volume *asdbv1beta1.VolumeSpec) (
 		initContainerAttachments, volume.InitContainers...,
 	)
 	initContainerAttachments = append(
-		initContainerAttachments, asdbv1beta1.VolumeAttachment{
-			ContainerName: asdbv1beta1.AerospikeInitContainerName,
+		initContainerAttachments, asdbv1.VolumeAttachment{
+			ContainerName: asdbv1.AerospikeInitContainerName,
 			Path:          initVolumePath,
 		},
 	)
@@ -1647,8 +1378,8 @@ func getFinalVolumeAttachmentsForVolume(volume *asdbv1beta1.VolumeSpec) (
 
 	if volume.Aerospike != nil {
 		containerAttachments = append(
-			containerAttachments, asdbv1beta1.VolumeAttachment{
-				ContainerName: asdbv1beta1.AerospikeServerContainerName,
+			containerAttachments, asdbv1.VolumeAttachment{
+				ContainerName: asdbv1.AerospikeServerContainerName,
 				Path:          volume.Aerospike.Path,
 			},
 		)
@@ -1658,7 +1389,7 @@ func getFinalVolumeAttachmentsForVolume(volume *asdbv1beta1.VolumeSpec) (
 }
 
 func addVolumeMountInContainer(
-	volumeName string, volumeAttachments []asdbv1beta1.VolumeAttachment,
+	volumeName string, volumeAttachments []asdbv1.VolumeAttachment,
 	containers []corev1.Container, pathPrefix string,
 ) {
 	var volumeMount corev1.VolumeMount
@@ -1668,7 +1399,7 @@ func addVolumeMountInContainer(
 			container := &containers[idx]
 
 			if container.Name == volumeAttachment.ContainerName {
-				if container.Name == asdbv1beta1.AerospikeInitContainerName {
+				if container.Name == asdbv1.AerospikeInitContainerName {
 					volumeMount = corev1.VolumeMount{
 						Name:      volumeName,
 						MountPath: pathPrefix + volumeAttachment.Path,
@@ -1691,7 +1422,7 @@ func addVolumeMountInContainer(
 }
 
 func addVolumeDeviceInContainer(
-	volumeName string, volumeAttachments []asdbv1beta1.VolumeAttachment,
+	volumeName string, volumeAttachments []asdbv1.VolumeAttachment,
 	containers []corev1.Container, pathPrefix string,
 ) {
 	var volumeDevice corev1.VolumeDevice
@@ -1701,7 +1432,7 @@ func addVolumeDeviceInContainer(
 			container := &containers[idx]
 
 			if container.Name == volumeAttachment.ContainerName {
-				if container.Name == asdbv1beta1.AerospikeInitContainerName {
+				if container.Name == asdbv1.AerospikeInitContainerName {
 					volumeDevice = corev1.VolumeDevice{
 						Name:       volumeName,
 						DevicePath: pathPrefix + volumeAttachment.Path,
@@ -1724,12 +1455,12 @@ func addVolumeDeviceInContainer(
 }
 
 func getSTSContainerPort(
-	multiPodPerHost bool, aeroConf *asdbv1beta1.AerospikeConfigSpec,
+	multiPodPerHost bool, aeroConf *asdbv1.AerospikeConfigSpec,
 ) []corev1.ContainerPort {
 	ports := make([]corev1.ContainerPort, 0, len(defaultContainerPorts))
 
 	for portName, portInfo := range defaultContainerPorts {
-		configPort := asdbv1beta1.GetPortFromConfig(
+		configPort := asdbv1.GetPortFromConfig(
 			aeroConf, portInfo.connectionType, portInfo.configParam,
 		)
 
@@ -1757,16 +1488,7 @@ func getSTSContainerPort(
 }
 
 func getNamespacedNameForSTS(
-	aeroCluster *asdbv1beta1.AerospikeCluster, rackID int,
-) types.NamespacedName {
-	return types.NamespacedName{
-		Name:      aeroCluster.Name + "-" + strconv.Itoa(rackID),
-		Namespace: aeroCluster.Namespace,
-	}
-}
-
-func getNamespacedNameForSTSConfigMap(
-	aeroCluster *asdbv1beta1.AerospikeCluster, rackID int,
+	aeroCluster *asdbv1.AerospikeCluster, rackID int,
 ) types.NamespacedName {
 	return types.NamespacedName{
 		Name:      aeroCluster.Name + "-" + strconv.Itoa(rackID),
@@ -1790,9 +1512,6 @@ func getSTSPodOrdinal(podName string) (*int32, error) {
 
 func getSTSPodName(statefulSetName string, index int32) string {
 	return fmt.Sprintf("%s-%d", statefulSetName, index)
-}
-func getSTSHeadLessSvcName(aeroCluster *asdbv1beta1.AerospikeCluster) string {
-	return aeroCluster.Name
 }
 
 func newSTSEnvVar(name, fieldPath string) corev1.EnvVar {

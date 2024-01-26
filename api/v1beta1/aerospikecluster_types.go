@@ -17,14 +17,10 @@ limitations under the License.
 package v1beta1
 
 import (
-	"fmt"
-
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-
-	lib "github.com/aerospike/aerospike-management-lib"
 )
 
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
@@ -127,8 +123,16 @@ type AerospikeOperatorCertSource struct {
 	CertPathInOperator *AerospikeCertPathInOperatorSource `json:"certPathInOperator,omitempty"`
 }
 
-type AerospikeSecretCertSource struct {
+type CaCertsSource struct {
 	SecretName string `json:"secretName"`
+	// +optional
+	SecretNamespace string `json:"secretNamespace,omitempty"`
+}
+
+type AerospikeSecretCertSource struct {
+	// +optional
+	CaCertsSource *CaCertsSource `json:"caCertsSource,omitempty"`
+	SecretName    string         `json:"secretName"`
 	// +optional
 	SecretNamespace string `json:"secretNamespace,omitempty"`
 	// +optional
@@ -149,48 +153,6 @@ type AerospikeCertPathInOperatorSource struct {
 	ClientCertPath string `json:"clientCertPath,omitempty"`
 	// +optional
 	ClientKeyPath string `json:"clientKeyPath,omitempty"`
-}
-
-func (c *AerospikeOperatorClientCertSpec) IsClientCertConfigured() bool {
-	return (c.SecretCertSource != nil && c.SecretCertSource.ClientCertFilename != "") ||
-		(c.CertPathInOperator != nil && c.CertPathInOperator.ClientCertPath != "")
-}
-
-func (c *AerospikeOperatorClientCertSpec) validate() error {
-	if (c.SecretCertSource == nil) == (c.CertPathInOperator == nil) {
-		return fmt.Errorf(
-			"either `secretCertSource` or `certPathInOperator` must be set in `operatorClientCertSpec` but not"+
-				" both: %+v",
-			c,
-		)
-	}
-
-	if c.SecretCertSource != nil &&
-		(c.SecretCertSource.ClientCertFilename == "") != (c.SecretCertSource.ClientKeyFilename == "") {
-		return fmt.Errorf(
-			"both `clientCertFilename` and `clientKeyFilename` should be either set or not set in"+
-				" `secretCertSource`: %+v",
-			c.SecretCertSource,
-		)
-	}
-
-	if c.CertPathInOperator != nil &&
-		(c.CertPathInOperator.ClientCertPath == "") != (c.CertPathInOperator.ClientKeyPath == "") {
-		return fmt.Errorf(
-			"both `clientCertPath` and `clientKeyPath` should be either set or not set in `certPathInOperator"+
-				"`: %+v",
-			c.CertPathInOperator,
-		)
-	}
-
-	if c.TLSClientName != "" && !c.IsClientCertConfigured() {
-		return fmt.Errorf(
-			"tlsClientName is provided but client certificate is not: secretCertSource=%+v, certPathInOperator=%v+v",
-			c.SecretCertSource, c.CertPathInOperator,
-		)
-	}
-
-	return nil
 }
 
 type AerospikeObjectMeta struct {
@@ -295,34 +257,6 @@ type SchedulingPolicy struct { //nolint:govet // for readability
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
 	// NodeSelector constraints for this pod.
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
-}
-
-// SetDefaults applies defaults to the pod spec.
-func (p *AerospikePodSpec) SetDefaults() error {
-	var groupID int64
-
-	if p.InputDNSPolicy == nil {
-		if p.HostNetwork {
-			p.DNSPolicy = corev1.DNSClusterFirstWithHostNet
-		} else {
-			p.DNSPolicy = corev1.DNSClusterFirst
-		}
-	} else {
-		p.DNSPolicy = *p.InputDNSPolicy
-	}
-
-	if p.SecurityContext != nil {
-		if p.SecurityContext.FSGroup == nil {
-			p.SecurityContext.FSGroup = &groupID
-		}
-	} else {
-		SecurityContext := &corev1.PodSecurityContext{
-			FSGroup: &groupID,
-		}
-		p.SecurityContext = SecurityContext
-	}
-
-	return nil
 }
 
 // RackConfig specifies all racks and related policies
@@ -443,25 +377,6 @@ type AerospikeAccessControlSpec struct {
 // +k8s:openapi-gen=true
 type AerospikeVolumeMethod string
 
-const (
-	// AerospikeVolumeMethodNone specifies the block volume should not be initialized.
-	AerospikeVolumeMethodNone AerospikeVolumeMethod = "none"
-
-	// AerospikeVolumeMethodDD specifies the block volume should be zeroed using dd command.
-	AerospikeVolumeMethodDD AerospikeVolumeMethod = "dd"
-
-	// AerospikeVolumeMethodBlkdiscard specifies the block volume should be zeroed using blkdiscard command.
-	AerospikeVolumeMethodBlkdiscard AerospikeVolumeMethod = "blkdiscard"
-
-	// AerospikeVolumeMethodDeleteFiles specifies the filesystem volume
-	// should be initialized by deleting files.
-	AerospikeVolumeMethodDeleteFiles AerospikeVolumeMethod = "deleteFiles"
-
-	// AerospikeVolumeSingleCleanupThread specifies the single thread
-	// for disks cleanup in init container.
-	AerospikeVolumeSingleCleanupThread int = 1
-)
-
 // AerospikePersistentVolumePolicySpec contains policies to manage persistent volumes.
 type AerospikePersistentVolumePolicySpec struct {
 
@@ -485,27 +400,6 @@ type AerospikePersistentVolumePolicySpec struct {
 
 	// Effective/operative value to use for cascade delete after applying defaults.
 	CascadeDelete bool `json:"effectiveCascadeDelete,omitempty"`
-}
-
-// SetDefaults applies default values to unset fields of the policy using corresponding fields from defaultPolicy
-func (p *AerospikePersistentVolumePolicySpec) SetDefaults(defaultPolicy *AerospikePersistentVolumePolicySpec) {
-	if p.InputInitMethod == nil {
-		p.InitMethod = defaultPolicy.InitMethod
-	} else {
-		p.InitMethod = *p.InputInitMethod
-	}
-
-	if p.InputWipeMethod == nil {
-		p.WipeMethod = defaultPolicy.WipeMethod
-	} else {
-		p.WipeMethod = *p.InputWipeMethod
-	}
-
-	if p.InputCascadeDelete == nil {
-		p.CascadeDelete = defaultPolicy.CascadeDelete
-	} else {
-		p.CascadeDelete = *p.InputCascadeDelete
-	}
 }
 
 // AerospikeServerVolumeAttachment is a volume attachment in the Aerospike server container.
@@ -721,32 +615,6 @@ type AerospikeClusterStatus struct { //nolint:govet // for readability
 // +k8s:openapi-gen=true
 type AerospikeNetworkType string
 
-const (
-	// AerospikeNetworkTypeUnspecified implies using default access.
-	AerospikeNetworkTypeUnspecified AerospikeNetworkType = ""
-
-	// AerospikeNetworkTypePod specifies access using the PodIP and actual Aerospike service port.
-	AerospikeNetworkTypePod AerospikeNetworkType = "pod"
-
-	// AerospikeNetworkTypeHostInternal specifies access using the Kubernetes host's internal IP.
-	// If the cluster runs single pod per Kubernetes host,
-	// the access port will the actual aerospike port else it will be a mapped port.
-	AerospikeNetworkTypeHostInternal AerospikeNetworkType = "hostInternal"
-
-	// AerospikeNetworkTypeHostExternal specifies access using the Kubernetes host's external IP.
-	// If the cluster runs single pod per Kubernetes host,
-	// the access port will the actual aerospike port else it will be a mapped port.
-	AerospikeNetworkTypeHostExternal AerospikeNetworkType = "hostExternal"
-
-	// AerospikeNetworkTypeConfigured specifies access/alternateAccess using the user configuredIP.
-	// label "aerospike.com/configured-access-address" in k8s node will be used as `accessAddress`
-	// label "aerospike.com/configured-alternate-access-address" in k8s node will be used as `alternateAccessAddress`
-	AerospikeNetworkTypeConfigured AerospikeNetworkType = "configuredIP"
-
-	// AerospikeNetworkTypeCustomInterface specifies any other custom interface to be used with Aerospike
-	AerospikeNetworkTypeCustomInterface AerospikeNetworkType = "customInterface"
-)
-
 // AerospikeNetworkPolicy specifies how clients and tools access the Aerospike cluster.
 type AerospikeNetworkPolicy struct {
 	// AccessType is the type of network address to use for Aerospike access address.
@@ -873,7 +741,7 @@ type AerospikePodStatus struct { //nolint:govet // for readability
 	// PodPort is the port K8s internal Aerospike clients can connect to.
 	PodPort int `json:"podPort"`
 	// ServicePort is the port Aerospike clients outside K8s can connect to.
-	ServicePort int32 `json:"servicePort"`
+	ServicePort int32 `json:"servicePort,omitempty"`
 
 	// Aerospike server instance summary for this pod.
 	Aerospike AerospikeInstanceSummary `json:"aerospike,omitempty"`
@@ -904,6 +772,7 @@ type AerospikePodStatus struct { //nolint:govet // for readability
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:deprecatedversion
 // +kubebuilder:printcolumn:name="Size",type=string,JSONPath=`.spec.size`
 // +kubebuilder:printcolumn:name="Image",type=string,JSONPath=`.spec.image`
 // +kubebuilder:printcolumn:name="MultiPodPerHost",type=boolean,JSONPath=`.spec.podSpec.MultiPodPerHost`
@@ -933,183 +802,4 @@ type AerospikeClusterList struct {
 
 func init() {
 	SchemeBuilder.Register(&AerospikeCluster{}, &AerospikeClusterList{})
-}
-
-// CopySpecToStatus copy spec in status. Spec to Status DeepCopy doesn't work. It fails in reflect lib.
-func CopySpecToStatus(spec *AerospikeClusterSpec) (*AerospikeClusterStatusSpec, error) { //nolint:dupl // not duplicate
-	status := AerospikeClusterStatusSpec{}
-
-	status.Size = spec.Size
-	status.Image = spec.Image
-
-	// Storage
-	statusStorage := AerospikeStorageSpec{}
-	lib.DeepCopy(&statusStorage, &spec.Storage)
-
-	status.Storage = statusStorage
-
-	if spec.AerospikeAccessControl != nil {
-		// AerospikeAccessControl
-		statusAerospikeAccessControl := &AerospikeAccessControlSpec{}
-		lib.DeepCopy(
-			statusAerospikeAccessControl, spec.AerospikeAccessControl,
-		)
-
-		status.AerospikeAccessControl = statusAerospikeAccessControl
-	}
-
-	// AerospikeConfig
-	statusAerospikeConfig := &AerospikeConfigSpec{}
-	lib.DeepCopy(
-		statusAerospikeConfig, spec.AerospikeConfig,
-	)
-
-	status.AerospikeConfig = statusAerospikeConfig
-
-	if spec.ValidationPolicy != nil {
-		// ValidationPolicy
-		statusValidationPolicy := &ValidationPolicySpec{}
-		lib.DeepCopy(
-			statusValidationPolicy, spec.ValidationPolicy,
-		)
-
-		status.ValidationPolicy = statusValidationPolicy
-	}
-
-	// RackConfig
-	statusRackConfig := RackConfig{}
-	lib.DeepCopy(&statusRackConfig, &spec.RackConfig)
-	status.RackConfig = statusRackConfig
-
-	// AerospikeNetworkPolicy
-	statusAerospikeNetworkPolicy := AerospikeNetworkPolicy{}
-	lib.DeepCopy(
-		&statusAerospikeNetworkPolicy, &spec.AerospikeNetworkPolicy,
-	)
-
-	status.AerospikeNetworkPolicy = statusAerospikeNetworkPolicy
-
-	if spec.OperatorClientCertSpec != nil {
-		clientCertSpec := &AerospikeOperatorClientCertSpec{}
-		lib.DeepCopy(
-			clientCertSpec, spec.OperatorClientCertSpec,
-		)
-
-		status.OperatorClientCertSpec = clientCertSpec
-	}
-
-	// Storage
-	statusPodSpec := AerospikePodSpec{}
-	lib.DeepCopy(&statusPodSpec, &spec.PodSpec)
-	status.PodSpec = statusPodSpec
-
-	seedsFinderServices := SeedsFinderServices{}
-	lib.DeepCopy(
-		&seedsFinderServices, &spec.SeedsFinderServices,
-	)
-
-	status.SeedsFinderServices = seedsFinderServices
-
-	// RosterNodeBlockList
-	if len(spec.RosterNodeBlockList) != 0 {
-		var rosterNodeBlockList []string
-
-		lib.DeepCopy(
-			&rosterNodeBlockList, &spec.RosterNodeBlockList,
-		)
-
-		status.RosterNodeBlockList = rosterNodeBlockList
-	}
-
-	return &status, nil
-}
-
-// CopyStatusToSpec copy status in spec. Status to Spec DeepCopy doesn't work. It fails in reflect lib.
-func CopyStatusToSpec(status *AerospikeClusterStatusSpec) (*AerospikeClusterSpec, error) { //nolint:dupl // no need
-	spec := AerospikeClusterSpec{}
-
-	spec.Size = status.Size
-	spec.Image = status.Image
-
-	// Storage
-	specStorage := AerospikeStorageSpec{}
-	lib.DeepCopy(&specStorage, &status.Storage)
-	spec.Storage = specStorage
-
-	if status.AerospikeAccessControl != nil {
-		// AerospikeAccessControl
-		specAerospikeAccessControl := &AerospikeAccessControlSpec{}
-		lib.DeepCopy(
-			specAerospikeAccessControl, status.AerospikeAccessControl,
-		)
-
-		spec.AerospikeAccessControl = specAerospikeAccessControl
-	}
-
-	// AerospikeConfig
-	specAerospikeConfig := &AerospikeConfigSpec{}
-	lib.DeepCopy(
-		specAerospikeConfig, status.AerospikeConfig,
-	)
-
-	spec.AerospikeConfig = specAerospikeConfig
-
-	if status.ValidationPolicy != nil {
-		// ValidationPolicy
-		specValidationPolicy := &ValidationPolicySpec{}
-		lib.DeepCopy(
-			specValidationPolicy, status.ValidationPolicy,
-		)
-
-		spec.ValidationPolicy = specValidationPolicy
-	}
-
-	// RackConfig
-	specRackConfig := RackConfig{}
-	lib.DeepCopy(&specRackConfig, &status.RackConfig)
-
-	spec.RackConfig = specRackConfig
-
-	// AerospikeNetworkPolicy
-	specAerospikeNetworkPolicy := AerospikeNetworkPolicy{}
-	lib.DeepCopy(
-		&specAerospikeNetworkPolicy, &status.AerospikeNetworkPolicy,
-	)
-
-	spec.AerospikeNetworkPolicy = specAerospikeNetworkPolicy
-
-	if status.OperatorClientCertSpec != nil {
-		clientCertSpec := &AerospikeOperatorClientCertSpec{}
-		lib.DeepCopy(
-			clientCertSpec, status.OperatorClientCertSpec,
-		)
-
-		spec.OperatorClientCertSpec = clientCertSpec
-	}
-
-	// Storage
-	specPodSpec := AerospikePodSpec{}
-	lib.DeepCopy(&specPodSpec, &status.PodSpec)
-
-	spec.PodSpec = specPodSpec
-
-	seedsFinderServices := SeedsFinderServices{}
-	lib.DeepCopy(
-		&seedsFinderServices, &status.SeedsFinderServices,
-	)
-
-	spec.SeedsFinderServices = seedsFinderServices
-
-	// RosterNodeBlockList
-	if len(status.RosterNodeBlockList) != 0 {
-		var rosterNodeBlockList []string
-
-		lib.DeepCopy(
-			&rosterNodeBlockList, &status.RosterNodeBlockList,
-		)
-
-		spec.RosterNodeBlockList = rosterNodeBlockList
-	}
-
-	return &spec, nil
 }

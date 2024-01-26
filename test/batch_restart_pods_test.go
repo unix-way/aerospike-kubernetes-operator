@@ -13,7 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/aerospike/aerospike-kubernetes-operator/api/v1beta1"
+	asdbv1 "github.com/aerospike/aerospike-kubernetes-operator/api/v1"
 	"github.com/aerospike/aerospike-kubernetes-operator/pkg/utils"
 )
 
@@ -40,7 +40,7 @@ var _ = Describe("BatchRestart", func() {
 
 	Context("When doing valid operations", func() {
 		clusterName := batchClusterName
-		clusterNamespacedName := getClusterNamespacedName(
+		clusterNamespacedName := getNamespacedName(
 			clusterName, namespace,
 		)
 		Context("BatchRollingRestart", func() {
@@ -48,7 +48,7 @@ var _ = Describe("BatchRestart", func() {
 		})
 		Context("BatchUpgrade", func() {
 			clusterName := "batch-upgrade"
-			clusterNamespacedName := getClusterNamespacedName(
+			clusterNamespacedName := getNamespacedName(
 				clusterName, namespace,
 			)
 			BatchUpgrade(ctx, clusterNamespacedName)
@@ -57,7 +57,7 @@ var _ = Describe("BatchRestart", func() {
 
 	Context("When doing invalid operations", func() {
 		clusterName := batchClusterName
-		clusterNamespacedName := getClusterNamespacedName(
+		clusterNamespacedName := getNamespacedName(
 			clusterName, namespace,
 		)
 		BeforeEach(
@@ -125,7 +125,7 @@ var _ = Describe("BatchRestart", func() {
 
 	Context("When doing namespace related operations", func() {
 		clusterName := batchClusterName
-		clusterNamespacedName := getClusterNamespacedName(
+		clusterNamespacedName := getNamespacedName(
 			clusterName, namespace,
 		)
 		It("Should fail if replication-factor is 1", func() {
@@ -153,7 +153,7 @@ var _ = Describe("BatchRestart", func() {
 			aeroCluster.Spec.RackConfig.Racks = racks
 			aeroCluster.Spec.RackConfig.Namespaces = []string{"test", "bar"}
 			aeroCluster.Spec.RackConfig.RollingUpdateBatchSize = percent("100%")
-			aeroCluster.Spec.RackConfig.Racks[0].InputAerospikeConfig = &v1beta1.AerospikeConfigSpec{
+			aeroCluster.Spec.RackConfig.Racks[0].InputAerospikeConfig = &asdbv1.AerospikeConfigSpec{
 				Value: map[string]interface{}{
 					"namespaces": []interface{}{
 						map[string]interface{}{
@@ -177,7 +177,7 @@ var _ = Describe("BatchRestart", func() {
 			aeroCluster.Spec.RackConfig.Racks = racks
 			aeroCluster.Spec.RackConfig.Namespaces = []string{"test", "bar"}
 			aeroCluster.Spec.RackConfig.RollingUpdateBatchSize = percent("100%")
-			config := &v1beta1.AerospikeConfigSpec{
+			config := &asdbv1.AerospikeConfigSpec{
 				Value: map[string]interface{}{
 					"namespaces": []interface{}{
 						map[string]interface{}{
@@ -420,7 +420,7 @@ func BatchUpgrade(ctx goctx.Context, clusterNamespacedName types.NamespacedName)
 	})
 }
 
-func isBatchRestart(aeroCluster *v1beta1.AerospikeCluster) bool {
+func isBatchRestart(aeroCluster *asdbv1.AerospikeCluster) bool {
 	// Wait for starting the pod restart process
 	for {
 		readyPods := getReadyPods(aeroCluster)
@@ -445,7 +445,7 @@ func isBatchRestart(aeroCluster *v1beta1.AerospikeCluster) bool {
 	return false
 }
 
-func getReadyPods(aeroCluster *v1beta1.AerospikeCluster) []string {
+func getReadyPods(aeroCluster *asdbv1.AerospikeCluster) []string {
 	podList, err := getPodList(aeroCluster, k8sClient)
 	Expect(err).ToNot(HaveOccurred())
 
@@ -462,7 +462,7 @@ func getReadyPods(aeroCluster *v1beta1.AerospikeCluster) []string {
 
 func updateClusterForBatchRestart(
 	k8sClient client.Client, ctx goctx.Context,
-	aeroCluster *v1beta1.AerospikeCluster,
+	aeroCluster *asdbv1.AerospikeCluster,
 ) error {
 	err := k8sClient.Update(ctx, aeroCluster)
 	if err != nil {

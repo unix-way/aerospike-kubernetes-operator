@@ -42,7 +42,7 @@ Run the following command with the appropriate name and version for the operator
 
 ```sh
 IMAGE_TAG_BASE=aerospike/aerospike-kubernetes-operator-nightly
-VERSION=2.5.0
+VERSION=3.0.0
 make docker-buildx IMG=${IMAGE_TAG_BASE}:${VERSION} PLATFORMS=linux/amd64
 ```
 **Note**: Change `PLATFORMS` var as per host machine or remove it to build multi-arch image
@@ -82,8 +82,8 @@ operator using OLM.
 
 ### Install operator-sdk
 
-Install operator-sdk version 1.10.1 using the
-installation [guide](https://v1-10-x.sdk.operatorframework.io/docs/installation/)
+Install operator-sdk version 1.28.0 using the
+installation [guide](https://v1-28-x.sdk.operatorframework.io/docs/installation/)
 
 ### Build the bundle
 
@@ -94,9 +94,10 @@ Set up the environment with image names.
 ```shell
 export ACCOUNT=aerospike
 export IMAGE_TAG_BASE=${ACCOUNT}/aerospike-kubernetes-operator
-export VERSION=2.5.0
+export VERSION=3.0.0
 export IMG=docker.io/${IMAGE_TAG_BASE}-nightly:${VERSION}
 export BUNDLE_IMG=docker.io/${IMAGE_TAG_BASE}-bundle-nightly:${VERSION}
+export CATALOG_IMG=docker.io/${IMAGE_TAG_BASE}-catalog-nightly:${VERSION}
 ```
 
 Create the bundle
@@ -109,6 +110,12 @@ make bundle
 
 ```shell
 make bundle-build bundle-push
+```
+
+### Build catalog image and publish
+
+```shell
+make docker-buildx-catalog
 ```
 
 ### Deploy operator with OLM
@@ -125,94 +132,84 @@ Create **aerospike** namespace if it does not exist
 kubectl create namespace aerospike
 ```
 
-### Deploy the operator targeting a single namespace
+### Deploy the operator using custom CatalogSource:
 
-Run the operator bundle
-
-```shell
-operator-sdk run bundle $BUNDLE_IMG --namespace=aerospike
-```
-
-### Deploy the operator targeting multiple namespaces
-
-Assuming you want the operator to target two other namespaces ns1 and ns2, deploy the operator with MultiNamespace
-install mode.
+#### Deploy custom CatalogSource:
 
 ```shell
-operator-sdk run bundle $BUNDLE_IMG --namespace=aerospike --install-mode MultiNamespace=ns1,ns2
-```
-
-For each additional targeted namespace
-
-- Create the operator service account for that namespace
-
-```shell
-# Replace ns1 with your target namespace
-kubectl -n ns1 create  serviceaccount aerospike-operator-controller-manager
-```
-
-- Find the cluster role binding created for the operator and add the service account created above
-
-```shell
-kubectl get clusterrolebindings.rbac.authorization.k8s.io  | grep aerospike-kubernetes-operator
-aerospike-kubernetes-operator.v2.5.0-74b946466d                 ClusterRole/aerospike-kubernetes-operator.v2.5.0-74b946466d   41m
-```
-
-In the example above the name of the cluster role binding is `aerospike-kubernetes-operator.v2.5.0-74b946466d`
-
-Edit the role binding and add a new subject entry for the service account
-
-```shell
-# Replace aerospike-kubernetes-operator.v2.5.0-74b946466d with the name of the cluster role binding found above
-kubectl edit clusterrolebindings.rbac.authorization.k8s.io  aerospike-kubernetes-operator.v2.5.0-74b946466d
-```
-
-In the editor that is launched append the following lines to the subjects section as shown below
-
-```yaml
-  # A new entry for ns1.
-  # Replace ns1 with your namespace
-  - kind: ServiceAccount
-    name: aerospike-operator-controller-manager
-    namespace: ns1
-```
-
-Here is a full example
-
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kubectl apply -f - <<EOF
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
 metadata:
-  creationTimestamp: "2021-09-16T10:48:36Z"
-  labels:
-    olm.owner: aerospike-kubernetes-operator.v2.5.0
-    olm.owner.kind: ClusterServiceVersion
-    olm.owner.namespace: test
-    operators.coreos.com/aerospike-kubernetes-operator.test: ""
-  name: aerospike-kubernetes-operator.v2.5.0-74b946466d
-  resourceVersion: "51841234"
-  uid: be546dd5-b21e-4cc3-8a07-e2fe5fe5274c
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: aerospike-kubernetes-operator.v2.5.0-74b946466d
-subjects:
-  - kind: ServiceAccount
-    name: aerospike-operator-controller-manager
-    namespace: aerospike
-
-  # New entry
-  - kind: ServiceAccount
-    name: aerospike-operator-controller-manager
-    namespace: ns1
+  name: aerospike
+  namespace: aerospike
+spec:
+  displayName: Aerospike operator
+  publisher: Aerospike operator
+  sourceType: grpc
+  image: "${CATALOG_IMG}"
+  updateStrategy:
+    registryPoll:
+      interval: 10m
+EOF
 ```
 
-Save and ensure that the changes are applied.
+#### Create Operator Group for the targeted namespaces:
+
+- Targeting single namespace
+```shell
+kubectl apply -f - <<EOF
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: test-operator-group
+  namespace: test
+spec:
+  targetNamespaces:
+    - aerospike
+  upgradeStrategy: Default
+EOF
+```
+
+- Targeting multiple namespaces
+  Assuming you want the operator to target two other namespaces ns1 and ns2, create operator group with MultiNamespace install mode.
+```shell
+```shell
+kubectl apply -f - <<EOF
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: test-operator-group
+  namespace: test
+spec:
+  targetNamespaces:
+    - ns1
+    - ns2
+  upgradeStrategy: Default
+EOF
+```
+
+#### Create Subscription to deploy operator:
+```shell
+kubectl apply -f - <<EOF
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: aerospike-kubernetes-operator
+  namespace: test
+spec:
+  channel: stable
+  installPlanApproval: Automatic
+  name: aerospike-kubernetes-operator
+  source: aerospike
+  sourceNamespace: aerospike
+EOF
+```
 
 ### Deploy your Aerospike clusters
 
 Deploy Aerospike clusters using the Operator
-documentation [here](https://docs.aerospike.com/docs/cloud/kubernetes/operator/Create-Aerospike-cluster.html).
+documentation [here](https://docs.aerospike.com/docs/cloud/kubernetes/operator/create-cluster-kubectl.html).
 
 ### Undeploy operator with OLM
 
@@ -230,22 +227,23 @@ The operator tests require following prerequisites
 - OLM bundle image created with as described [here](#build-the-bundle)
 - No production services should be running on this cluster - including the operator or production Aerospike clusters
 
-The operator tests create and use three namespaces
+The operator tests create and use 4 namespaces
 
 - test
 - test1
 - test2
+- aerospike
 
 Run the entire test suite
 
 ```shell
-./test/test.sh $BUNDLE_IMG
+./test/test.sh -b $BUNDLE_IMG -c $CATALOG_IMG
 ```
 
 Run tests matching a regex
 
 ```shell
-./test/test.sh $BUNDLE_IMG '-ginkgo.focus=".*MultiCluster.*"'
+./test/test.sh -b $BUNDLE_IMG -c $CATALOG_IMG '-ginkgo.focus=".*MultiCluster.*"'
 ```
 
 ## Architecture

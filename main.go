@@ -24,8 +24,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	// +kubebuilder:scaffold:imports
-
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
+
+	asdbv1 "github.com/aerospike/aerospike-kubernetes-operator/api/v1"
 	asdbv1beta1 "github.com/aerospike/aerospike-kubernetes-operator/api/v1beta1"
 	aerospikecluster "github.com/aerospike/aerospike-kubernetes-operator/controllers"
 	"github.com/aerospike/aerospike-kubernetes-operator/pkg/configschema"
@@ -39,30 +40,18 @@ var (
 
 func init() {
 	// +kubebuilder:scaffold:scheme
+	utilRuntime.Must(asdbv1.AddToScheme(scheme))
 	utilRuntime.Must(clientGoScheme.AddToScheme(scheme))
 	utilRuntime.Must(asdbv1beta1.AddToScheme(scheme))
 }
 
 func main() {
-	var (
-		metricsAddr          string
-		enableLeaderElection bool
-		probeAddr            string
-		err                  error
-	)
+	var configFile string
 
-	flag.StringVar(
-		&metricsAddr, "metrics-bind-address", ":8080",
-		"The address the metric endpoint binds to.",
-	)
-	flag.StringVar(
-		&probeAddr, "health-probe-bind-address", ":8081",
-		"The address the probe endpoint binds to.",
-	)
-	flag.BoolVar(
-		&enableLeaderElection, "leader-elect", false,
-		"Enable leader election for controller manager. "+
-			"Enabling this will ensure there is only one active controller manager.",
+	flag.StringVar(&configFile, "config", "controller_manager_config.yaml",
+		"The controller will load its initial configuration from this file. "+
+			"Omit this flag to use the default configuration values. "+
+			"Command-line flags override configuration from this file.",
 	)
 
 	opts := zap.Options{
@@ -97,18 +86,20 @@ func main() {
 		}
 	}
 
-	// Create a new Cmd to provide shared dependencies and start components
+	// Create a new controller option for controller manager
 	options := ctrl.Options{
-		NewClient:              newClient,
-		Scheme:                 scheme,
-		MetricsBindAddress:     metricsAddr,
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "96242fdf.aerospike.com",
+		NewClient: newClient,
+		Scheme:    scheme,
 		// if webhookServer is nil, which will be the case of OLM >= 0.17,
 		// the manager will create a server for you using Host, Port
 		// and the default CertDir, KeyName, and CertName.
 		WebhookServer: webhookServer,
+	}
+
+	options, err = options.AndFrom(ctrl.ConfigFile().AtPath(configFile))
+	if err != nil {
+		setupLog.Error(err, "unable to load the config file")
+		os.Exit(1)
 	}
 
 	// Add support for multiple namespaces given in WATCH_NAMESPACE (e.g. ns1,ns2)
@@ -173,10 +164,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&asdbv1beta1.AerospikeCluster{}).SetupWebhookWithManager(mgr); err != nil {
-		setupLog.Error(
-			err, "unable to create webhook", "webhook", "AerospikeCluster",
-		)
+	if err = (&asdbv1.AerospikeCluster{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "v1-webhook", "AerospikeCluster")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

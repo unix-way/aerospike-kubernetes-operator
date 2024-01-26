@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 
-	asdbv1beta1 "github.com/aerospike/aerospike-kubernetes-operator/api/v1beta1"
+	asdbv1 "github.com/aerospike/aerospike-kubernetes-operator/api/v1"
 )
 
 var _ = Describe(
@@ -38,7 +38,7 @@ func securityContextTest(
 	It(
 		"Validate SecurityContext applied", func() {
 			By("DeployCluster with SecurityContext")
-			clusterNamespacedName := getClusterNamespacedName(
+			clusterNamespacedName := getNamespacedName(
 				"security-context-create", namespace,
 			)
 			aeroCluster := createDummyAerospikeCluster(
@@ -73,7 +73,7 @@ func securityContextTest(
 	It(
 		"Validate SecurityContext updated", func() {
 			By("DeployCluster")
-			clusterNamespacedName := getClusterNamespacedName(
+			clusterNamespacedName := getNamespacedName(
 				"security-context-updated", namespace,
 			)
 			aeroCluster := createDummyAerospikeCluster(
@@ -135,7 +135,7 @@ func securityContextTest(
 }
 
 func validateSecurityContext(
-	aeroCluster *asdbv1beta1.AerospikeCluster,
+	aeroCluster *asdbv1.AerospikeCluster,
 ) {
 	pods, err := getClusterPodList(
 		k8sClient, goctx.TODO(),

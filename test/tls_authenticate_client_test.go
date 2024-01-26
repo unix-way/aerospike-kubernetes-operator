@@ -16,7 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	asdbv1beta1 "github.com/aerospike/aerospike-kubernetes-operator/api/v1beta1"
+	asdbv1 "github.com/aerospike/aerospike-kubernetes-operator/api/v1"
 )
 
 var _ = Describe(
@@ -25,6 +25,7 @@ var _ = Describe(
 		Context(
 			"When using tls-authenticate-client: Any", func() {
 				doTestTLSAuthenticateClientAny(ctx)
+				doTestTLSAuthenticateClientAnyWithCapath(ctx)
 			},
 		)
 		Context(
@@ -74,7 +75,7 @@ var _ = Describe(
 	},
 )
 
-func getTLSAuthenticateClient(config *asdbv1beta1.AerospikeCluster) (
+func getTLSAuthenticateClient(config *asdbv1.AerospikeCluster) (
 	[]string, error,
 ) {
 	configSpec := config.Spec.AerospikeConfig.Value
@@ -89,7 +90,7 @@ func getTLSAuthenticateClient(config *asdbv1beta1.AerospikeCluster) (
 		return nil, fmt.Errorf("service configuration not found")
 	}
 
-	tlsAuthenticateClient, err := asdbv1beta1.ReadTLSAuthenticateClient(serviceConf)
+	tlsAuthenticateClient, err := asdbv1.ReadTLSAuthenticateClient(serviceConf)
 	if err != nil {
 		return nil, err
 	}
@@ -99,68 +100,68 @@ func getTLSAuthenticateClient(config *asdbv1beta1.AerospikeCluster) (
 
 func getAerospikeConfig(
 	networkConf map[string]interface{},
-	operatorClientCertSpec *asdbv1beta1.AerospikeOperatorClientCertSpec,
-) *asdbv1beta1.AerospikeCluster {
+	operatorClientCertSpec *asdbv1.AerospikeOperatorClientCertSpec,
+) *asdbv1.AerospikeCluster {
 	cascadeDelete := true
 
-	return &asdbv1beta1.AerospikeCluster{
+	return &asdbv1.AerospikeCluster{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "tls-auth-client",
 			Namespace: "test",
 		},
-		Spec: asdbv1beta1.AerospikeClusterSpec{
+		Spec: asdbv1.AerospikeClusterSpec{
 			Size:  1,
 			Image: latestImage,
-			Storage: asdbv1beta1.AerospikeStorageSpec{
-				FileSystemVolumePolicy: asdbv1beta1.AerospikePersistentVolumePolicySpec{
+			Storage: asdbv1.AerospikeStorageSpec{
+				FileSystemVolumePolicy: asdbv1.AerospikePersistentVolumePolicySpec{
 					InputCascadeDelete: &cascadeDelete,
 				},
-				BlockVolumePolicy: asdbv1beta1.AerospikePersistentVolumePolicySpec{
+				BlockVolumePolicy: asdbv1.AerospikePersistentVolumePolicySpec{
 					InputCascadeDelete: &cascadeDelete,
 				},
-				Volumes: []asdbv1beta1.VolumeSpec{
+				Volumes: []asdbv1.VolumeSpec{
 					{
 						Name: "workdir",
-						Source: asdbv1beta1.VolumeSource{
-							PersistentVolume: &asdbv1beta1.PersistentVolumeSpec{
+						Source: asdbv1.VolumeSource{
+							PersistentVolume: &asdbv1.PersistentVolumeSpec{
 								Size:         resource.MustParse("1Gi"),
 								StorageClass: storageClass,
 								VolumeMode:   corev1.PersistentVolumeFilesystem,
 							},
 						},
-						Aerospike: &asdbv1beta1.AerospikeServerVolumeAttachment{
+						Aerospike: &asdbv1.AerospikeServerVolumeAttachment{
 							Path: "/opt/aerospike",
 						},
 					},
 					{
 						Name: "ns",
-						Source: asdbv1beta1.VolumeSource{
-							PersistentVolume: &asdbv1beta1.PersistentVolumeSpec{
+						Source: asdbv1.VolumeSource{
+							PersistentVolume: &asdbv1.PersistentVolumeSpec{
 								Size:         resource.MustParse("1Gi"),
 								StorageClass: storageClass,
 								VolumeMode:   corev1.PersistentVolumeFilesystem,
 							},
 						},
-						Aerospike: &asdbv1beta1.AerospikeServerVolumeAttachment{
+						Aerospike: &asdbv1.AerospikeServerVolumeAttachment{
 							Path: "/opt/aerospike/data",
 						},
 					},
 					{
 						Name: aerospikeConfigSecret,
-						Source: asdbv1beta1.VolumeSource{
+						Source: asdbv1.VolumeSource{
 							Secret: &corev1.SecretVolumeSource{
 								SecretName: tlsSecretName,
 							},
 						},
-						Aerospike: &asdbv1beta1.AerospikeServerVolumeAttachment{
+						Aerospike: &asdbv1.AerospikeServerVolumeAttachment{
 							Path: "/etc/aerospike/secret",
 						},
 					},
 				},
 			},
 
-			AerospikeAccessControl: &asdbv1beta1.AerospikeAccessControlSpec{
-				Users: []asdbv1beta1.AerospikeUserSpec{
+			AerospikeAccessControl: &asdbv1.AerospikeAccessControlSpec{
+				Users: []asdbv1.AerospikeUserSpec{
 					{
 						Name:       "admin",
 						SecretName: authSecretNameForUpdate,
@@ -171,7 +172,7 @@ func getAerospikeConfig(
 					},
 				},
 			},
-			AerospikeConfig: &asdbv1beta1.AerospikeConfigSpec{
+			AerospikeConfig: &asdbv1.AerospikeConfigSpec{
 				Value: map[string]interface{}{
 					"service": map[string]interface{}{
 						"feature-key-file": "/etc/aerospike/secret/features.conf",
@@ -195,11 +196,11 @@ func getAerospikeConfig(
 				},
 			},
 			OperatorClientCertSpec: operatorClientCertSpec,
-			RackConfig: asdbv1beta1.RackConfig{
-				Racks: []asdbv1beta1.Rack{
+			RackConfig: asdbv1.RackConfig{
+				Racks: []asdbv1.Rack{
 					{
 						ID: 1,
-						AerospikeConfig: asdbv1beta1.AerospikeConfigSpec{
+						AerospikeConfig: asdbv1.AerospikeConfigSpec{
 							Value: map[string]interface{}{
 								"service": map[string]interface{}{
 									"feature-key-file": "/etc/aerospike/secret/features.conf",
@@ -240,6 +241,68 @@ func doTestTLSAuthenticateClientAny(ctx goctx.Context) {
 			aeroCluster := getAerospikeConfig(
 				networkConf, operatorClientCertSpec,
 			)
+			err := aerospikeClusterCreateUpdate(k8sClient, aeroCluster, ctx)
+			Expect(err).ToNot(HaveOccurred())
+			tlsAuthenticateClient, err := getTLSAuthenticateClient(aeroCluster)
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(
+				reflect.DeepEqual(
+					[]string{"any"}, tlsAuthenticateClient,
+				),
+			).To(
+				BeTrue(),
+				fmt.Sprintf(
+					"TlsAuthenticateClientAny Validation Failed with following value: %v",
+					tlsAuthenticateClient,
+				),
+			)
+
+			err = deleteCluster(k8sClient, ctx, aeroCluster)
+			Expect(err).ToNot(HaveOccurred())
+		},
+	)
+}
+
+func doTestTLSAuthenticateClientAnyWithCapath(ctx goctx.Context) {
+	It(
+		"TlsAuthenticateClientAny with capath", func() {
+			networkConf := getNetworkTLSConfig()
+			networkConf["service"].(map[string]interface{})["tls-authenticate-client"] = "any"
+			tls := []interface{}{
+				map[string]interface{}{
+					"name":      "aerospike-a-0.test-runner",
+					"cert-file": "/etc/aerospike/secret/server-cert.pem",
+					"key-file":  "/etc/aerospike/secret/server_key.pem",
+					"ca-path":   "/etc/aerospike/secret/cacerts",
+				},
+			}
+			networkConf["tls"] = tls
+
+			operatorClientCertSpec := getOperatorCert()
+			operatorClientCertSpec.AerospikeOperatorCertSource.SecretCertSource.CaCertsFilename = ""
+			operatorClientCertSpec.AerospikeOperatorCertSource.SecretCertSource.ClientCertFilename = "server-cert.pem"
+			operatorClientCertSpec.AerospikeOperatorCertSource.SecretCertSource.ClientKeyFilename = "server_key.pem"
+			cacertPath := &asdbv1.CaCertsSource{
+				SecretName: tlsCacertSecretName,
+			}
+			operatorClientCertSpec.AerospikeOperatorCertSource.SecretCertSource.CaCertsSource = cacertPath
+
+			aeroCluster := getAerospikeConfig(
+				networkConf, operatorClientCertSpec,
+			)
+			secretVolume := asdbv1.VolumeSpec{
+				Name: tlsCacertSecretName,
+				Source: asdbv1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName: tlsCacertSecretName,
+					},
+				},
+				Aerospike: &asdbv1.AerospikeServerVolumeAttachment{
+					Path: "/etc/aerospike/secret/cacerts",
+				},
+			}
+			aeroCluster.Spec.Storage.Volumes = append(aeroCluster.Spec.Storage.Volumes, secretVolume)
 			err := aerospikeClusterCreateUpdate(k8sClient, aeroCluster, ctx)
 			Expect(err).ToNot(HaveOccurred())
 			tlsAuthenticateClient, err := getTLSAuthenticateClient(aeroCluster)

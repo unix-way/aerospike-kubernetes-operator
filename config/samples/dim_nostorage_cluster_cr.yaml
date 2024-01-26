@@ -1,11 +1,11 @@
-apiVersion: asdb.aerospike.com/v1beta1
+apiVersion: asdb.aerospike.com/v1
 kind: AerospikeCluster
 metadata:
   name: aerocluster
   namespace: aerospike
 spec:
   size: 2
-  image: aerospike/aerospike-server-enterprise:6.3.0.0
+  image: aerospike/aerospike-server-enterprise:6.4.0.0
 
   podSpec:
     multiPodPerHost: true
