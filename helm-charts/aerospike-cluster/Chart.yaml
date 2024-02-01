@@ -3,7 +3,7 @@ type: application
 name: aerospike-cluster
 
 # version tracks chart changes
-version: 3.0.0
+version: 3.0.1
 # appVersion tracks operator version
 appVersion: 3.0.0
 

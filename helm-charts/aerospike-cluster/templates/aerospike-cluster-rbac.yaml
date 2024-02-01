@@ -1,0 +1,57 @@
+# Service account used by the cluster pods to obtain pod metadata.
+# ClusterRole aerospike-cluster is created in operator chart
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aerospike-operator-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "aerospike-cluster.commonName" . }}
+    chart: {{ .Chart.Name }}
+    release: {{ .Release.Name }}
+{{- with .Values.imagePullSecrets }}
+imagePullSecrets:
+  {{- range . }}
+  - name: {{ . }}
+  {{- end }}
+{{- end }}
+---
+
+# ClusterRoleBinding
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: aerospike-cluster-{{ .Release.Namespace }}-{{ .Release.Name }}
+  labels:
+    app: {{ template "aerospike-cluster.commonName" . }}
+    chart: {{ .Chart.Name }}
+    release: {{ .Release.Name }}
+roleRef:
+  kind: ClusterRole
+  name: aerospike-cluster
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: aerospike-operator-controller-manager
+  namespace: {{ .Release.Namespace }}
+---
+
+# RoleBinding
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: aerospike-cluster
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "aerospike-cluster.commonName" . }}
+    chart: {{ .Chart.Name }}
+    release: {{ .Release.Name }}
+roleRef:
+  kind: ClusterRole
+  name: aerospike-cluster
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: aerospike-operator-controller-manager
+  namespace: {{ .Release.Namespace }}
+---
